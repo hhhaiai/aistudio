@@ -78,10 +78,11 @@ jobs:
           git fetch upstream --tags --force
 
           # 检查是否有新tag需要同步
+          # 注意：git tag -r upstream 输出带 'upstream/' 前缀，需要去掉
           LOCAL_TAGS=$(git tag | sort | uniq)
-          UPSTREAM_TAGS=$(git tag -r upstream | grep -v '\^{}' | sort | uniq)
+          UPSTREAM_TAGS=$(git tag -r upstream | grep -v '\^{}' | sed 's|^upstream/||' | sort | uniq)
 
-          # 如果有新tag，设置输出变量
+          # 找出上游有但本地没有的tags
           NEW_TAGS=$(comm -13 <(echo "$LOCAL_TAGS") <(echo "$UPSTREAM_TAGS"))
           if [ -n "$NEW_TAGS" ]; then
             echo "new-tags=$NEW_TAGS" >> $GITHUB_OUTPUT
