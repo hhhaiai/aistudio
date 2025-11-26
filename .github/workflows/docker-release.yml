@@ -1,0 +1,172 @@
+name: Create Docker Release
+
+# 在推送tag时自动构建和发布Docker镜像
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 匹配 v1.0.0, v2.1.3 等格式的tag
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      tag_name:
+        description: 'Tag name (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+        type: string
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # 需要写入权限来推送Docker镜像到GHCR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # 使用tag作为版本号
+            type=ref,event=tag,pattern={{tag}}
+            # 手动触发时使用输入的tag名
+            type=raw,value=${{ github.event.inputs.tag_name }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # 也标记为latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 添加semver格式支持
+            type=semver,pattern={{version}}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PROXY_ADDR=${{ secrets.DOCKER_PROXY_ADDR }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Image
+        run: |
+          echo "✅ Docker image built successfully"
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name || github.event.inputs.tag_name }}"
+          echo "🏷️ Tags: ${{ steps.meta.outputs.tags }}"
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.create_release == 'true' }}
+    permissions:
+      contents: write  # 需要写入权限来创建release
+      packages: read   # 需要读取权限来获取镜像信息
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史以生成changelog
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 获取上一个tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "## 📝 Changes" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "This is the initial release!" >> CHANGELOG.md
+          else
+            # 生成从上个tag到现在的提交记录
+            echo "## 📝 Changes from $PREVIOUS_TAG to ${{ github.ref_name }}" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> CHANGELOG.md
+          fi
+
+          # 添加图片信息
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## 🐳 Docker Image" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "This release includes a pre-built Docker image:" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+
+          # 读取文件内容并设置输出
+          {
+            echo 'changelog<<EOF'
+            cat CHANGELOG.md
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            # 可以在这里添加要上传的附件，如预编译的二进制文件等
+
+      - name: Release summary
+        run: |
+          echo "## 🎉 Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release**: [View Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Image**: [View in GHCR](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pull Command:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Notify Success
+    needs: [build-and-push, create-release]
+    runs-on: ubuntu-latest
+    if: always() && needs.build-and-push.result == 'success'
+    steps:
+      - name: Create success summary
+        run: |
+          echo "## ✅ Docker Release Workflow Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release Creation | ${{ needs.create-release.result != 'skipped' && '✅ Success' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: ${{ github.ref_name || github.event.inputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
