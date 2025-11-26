@@ -1,10 +1,10 @@
 name: Sync with Upstream
 
-# 每3小时自动同步一次上游仓库
+# 每天自动同步一次上游仓库
 on:
   schedule:
-    # UTC时间，每3小时执行一次 (0,3,6,9,12,15,18,21点)
-    - cron: '0 */3 * * *'
+    # UTC时间，每天下午20点执行（约北京时间次日凌晨4点）
+    - cron: '0 20 * * *'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }} # 使用PAT以触发后续workflow
           fetch-depth: 0  # 获取完整历史记录
 
       - name: Configure git
