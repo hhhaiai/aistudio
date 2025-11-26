@@ -26,15 +26,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote (if not exists)
+      - name: Setup upstream remote
         run: |
+          # 检查upstream是否存在
           if ! git remote get-url upstream &> /dev/null; then
             echo "Adding upstream remote..."
-            # 直接添加上游仓库URL
             git remote add upstream https://github.com/CJackHwang/AIstudioProxyAPI.git
           else
-            echo "Upstream remote already exists"
+            echo "Upstream remote exists, checking URL..."
+            CURRENT_URL=$(git remote get-url upstream)
+            echo "Current URL: $CURRENT_URL"
           fi
+          # 确保upstream URL正确
+          git remote set-url upstream https://github.com/CJackHwang/AIstudioProxyAPI.git
+          echo "✅ Upstream remote configured: $(git remote get-url upstream)"
 
       - name: Fetch upstream
         run: |
