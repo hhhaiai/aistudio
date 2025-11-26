@@ -92,6 +92,15 @@ jobs:
             echo "✅ No new tags found"
           fi
 
+      - name: Create auto tag
+        if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
+        run: |
+          # 生成自动版本号：v{年份}.{月份}.{日期}-{提交哈希前7位}
+          AUTO_TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+          echo "Creating auto tag: $AUTO_TAG"
+          git tag $AUTO_TAG
+          echo "✅ Auto tag created: $AUTO_TAG"
+
       - name: Push changes and tags
         if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
         run: |
@@ -115,21 +124,3 @@ jobs:
           else
             echo "- **Result**: ✅ Repository is already up-to-date" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Trigger Docker Build
-        if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Trigger docker-release workflow
-            github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'docker-release.yml',
-              ref: 'main',
-              inputs: {
-                tag_name: 'auto-' + new Date().toISOString().slice(0, 10) + '-' + Math.floor(Math.random() * 1000),
-                create_release: false
-              }
-            })
-            console.log('✅ Docker build triggered successfully!')
