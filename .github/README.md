@@ -1,138 +1,79 @@
 # GitHub Actions 自动化工作流
 
+[![Sync with Upstream](https://github.com/CJackHwang/AIstudioProxyAPI/actions/workflows/sync-upstream.yml/badge.svg)](https://github.com/CJackHwang/AIstudioProxyAPI/actions/workflows/sync-upstream.yml)
+[![Create Docker Release](https://github.com/CJackHwang/AIstudioProxyAPI/actions/workflows/docker-release.yml/badge.svg)](https://github.com/CJackHwang/AIstudioProxyAPI/actions/workflows/docker-release.yml)
+
 本文档介绍了为 AI Studio Proxy API 项目配置的自动化 GitHub Actions 工作流。
 
 ## 📋 工作流概览
 
-项目包含两个主要的 GitHub Actions 自动化工作流：
+项目包含两个主要的 GitHub Actions 自动化工作流，实现了从代码同步到镜像构建的全自动化闭环：
 
 ### 1. 🔄 自动同步上游仓库 (`sync-upstream.yml`)
 
-**功能**: 每天自动同步 fork 的仓库与上游仓库（CJackHwang/AIstudioProxyAPI）
+**功能**: 每天自动同步 fork 的仓库与上游仓库（CJackHwang/AIstudioProxyAPI），确保您的私有部署始终保持最新。
 
 **特性**:
-- ✅ 每天UTC 20点自动运行（约北京时间次日凌晨4点）
-- ✅ 支持手动触发
-- ✅ 智能检测是否需要同步
-- ✅ 自动合并上游更新
-- ✅ **自动同步上游tags到fork**
-- ✅ 自动触发Docker Release工作流
-- ✅ 生成详细的执行报告
+- ✅ **每日同步**: 每天UTC 20点（北京时间次日凌晨4点）自动运行
+- ✅ **完整同步**: 不仅同步 tags，也同步 main 分支的最新 commits
+- ✅ **自动触发构建**: 同步成功后，自动触发 Docker 构建工作流
+- ✅ **手动触发**: 支持在 Actions 页面手动触发同步
 
 **触发方式**:
-- 定时触发：每天UTC 20点
-- 手动触发：在 Actions 页面手动运行
-
-**权限要求**:
-- `contents: write` - 推送更改到仓库
-
-**关键流程**:
-```
-上游仓库打tag → 每日sync工作流检测 → 同步tag到fork → 触发docker-release → 构建镜像
-```
+- ⏰ 定时触发：每天UTC 20点
+- 👆 手动触发：在 Actions 页面手动运行
 
 ### 2. 🐳 Docker Release (`docker-release.yml`)
 
-**功能**: 自动构建 Docker 镜像并创建 GitHub Release
+**功能**: 自动构建 Docker 镜像并发布到 GitHub Container Registry (GHCR)。
+
+**支持两种构建模式**:
+
+| 模式 | 触发条件 | Tag 格式 | 说明 |
+|------|---------|----------|------|
+| **稳定版发布** | 上游发布新 Tag (如 `v1.2.0`) | `v1.2.0`, `latest` | 对应上游正式版本，自动创建 GitHub Release |
+| **日常构建 (Nightly)** | 日常同步 (无新Tag) 或 定时/手动 | `v2024.11.26-a1b2c3d` | 对应 main 分支最新代码，**不创建** GitHub Release |
 
 **特性**:
-- ✅ 自动构建和推送 Docker 镜像到 GitHub Container Registry (GHCR)
-- ✅ 创建包含详细变更日志的 GitHub Release
-- ✅ 支持多标签（latest、版本号）
-- ✅ 自动生成 changelog
-- ✅ 支持手动触发（可选择不创建Release）
-
-**触发方式**:
-- 自动触发：fork收到同步的tag（来自sync工作流）
-- 手动触发：在 Actions 页面手动运行
-
-**权限要求**:
-- `contents: read` - 读取仓库内容
-- `packages: write` - 推送 Docker 镜像
-- `packages: read` - 读取镜像信息
-
-**使用场景**:
-- **自动场景1**：上游tag推送 → 自动构建镜像 + 创建Release
-- **自动场景2**：GitHub网页创建Release → 自动构建镜像（跳过创建Release步骤）
-- **手动场景**：手动触发构建，可选择是否创建Release
-
-## ✨ 关键特性
-
-| 特性 | 说明 |
-|------|------|
-| 🏷️ **双标签支持** | 每个版本都有 `v1.2.0` 和 `latest` 两个标签 |
-| 🔄 **自动更新latest** | 最新版本自动更新latest标签 |
-| 📦 **即用镜像** | 无需本地构建，直接拉取运行 |
-| 🔧 **完整配置** | 发布页自动包含运行命令和说明 |
+- ✅ **双重标签**: 稳定版同时打上版本号和 `latest` 标签
+- ✅ **自动 Changelog**: 发布稳定版时自动生成详细变更日志
+- ✅ **多架构支持**: 自动构建适配不同架构的镜像
+- ✅ **灵活触发**: 支持 Tag 推送、定时任务、手动触发等多种方式
 
 ## 🚀 使用指南
 
-### 方式一：自动同步上游代码
+### 场景一：保持最新 (推荐)
 
-1. **自动触发**：
-   - 每天UTC 20点自动检测上游仓库更新（约北京时间次日凌晨4点）
-   - 当检测到新tag时，自动同步到fork
-
-2. **自动构建Docker**：
-   - 上游仓库打tag → 每日sync工作流同步tag → docker-release工作流自动构建
-   - 支持3种触发方式：git push tag、GitHub网页创建Release、手动触发
-   - 无需手动干预，全自动化
-
-3. **监控同步**：
-   - 在 GitHub 仓库的 "Actions" 页面查看工作流执行状态
-   - 每次执行后会在执行摘要中显示同步状态
-
-### 方式二：手动触发同步
-
-1. **手动运行同步**：
-   - 进入 Actions 页面
-   - 选择 "Sync with Upstream" 工作流
-   - 点击 "Run workflow" 按钮
-
-### 方式三：手动构建 Docker 镜像
-
-1. **进入 Actions 页面**：
-   - 选择 "Create Docker Release" 工作流
-   - 点击 "Run workflow"
-
-2. **填写参数**：
-   - **Tag name**: 输入要构建的tag名称（如 v1.0.0）
-   - **Create GitHub Release**: 选择是否创建GitHub Release
-     - ✅ 选中：构建镜像 + 创建Release
-     - ❌ 不选中：仅构建镜像
-
-3. **获取镜像**：
-   ```bash
-   # 拉取最新版本
-   docker pull ghcr.io/<your-username>/aistudioproxyapi:latest
-
-   # 拉取特定版本
-   docker pull ghcr.io/<your-username>/aistudioproxyapi:v1.0.0
-   ```
-
-### 完整自动化流程
-
-**上游仓库发布新版本时**：
-
-1. 原仓库维护者推送新tag（如 `v1.2.0`）
-2. 每3小时，sync工作流自动检测并同步tag到fork
-3. docker-release工作流自动触发，构建Docker镜像
-4. 自动创建GitHub Release
-5. 完成！您的fork现在有了对应的Docker镜像
-
-**用户无需任何手动操作！** 🎉
-
-## 🐳 Docker 镜像使用
-
-### 拉取镜像
+您无需做任何操作。
+1. 工作流每天自动同步上游代码。
+2. 自动触发构建最新的 Docker 镜像。
+3. 您只需定期拉取 `latest` 镜像即可享受最新功能。
 
 ```bash
-# 拉取最新版本（推荐）
+# 拉取最新镜像（包含最新 commits）
 docker pull ghcr.io/<your-username>/aistudioproxyapi:latest
+```
 
+### 场景二：使用特定稳定版
+
+如果您希望使用经过验证的稳定版本：
+
+```bash
 # 拉取特定版本
 docker pull ghcr.io/<your-username>/aistudioproxyapi:v1.2.0
 ```
+
+### 场景三：手动触发更新
+
+如果您知道上游刚更新了重要功能，不想等第二天自动同步：
+
+1. 进入 GitHub 仓库的 **Actions** 页面。
+2. 选择 **Sync with Upstream** 工作流。
+3. 点击 **Run workflow**。
+4. 等待同步完成，它会自动触发 Docker 构建。
+5. 构建完成后，拉取镜像即可。
+
+## 🐳 Docker 镜像使用
 
 ### 运行容器
 
@@ -141,133 +82,41 @@ docker run -d \
     --restart always \
     -p 8880:2048 \
     -p 8881:3120 \
-    -v "/Users/sanbo/log/AIstudioProxy/auth_profiles":/app/auth_profiles \
-    -v "/Users/sanbo/log/AIstudioProxy/.env":/app/.env:ro \
-    -v "/Users/sanbo/log/AIstudioProxy/certs":/app/certs \
-    --name ai-studio-proxy-container \
+    -v "/path/to/auth_profiles":/app/auth_profiles \
+    -v "/path/to/.env":/app/.env:ro \
+    --name ai-studio-proxy \
     ghcr.io/<your-username>/aistudioproxyapi:latest
 ```
 
-### 端口说明
+### 环境变量与配置
 
-- **8880:2048** - FastAPI服务端口（API端点）
-- **8881:3120** - 流式代理端口（流式响应）
-
-### 数据卷挂载
+推荐将 `.env` 文件挂载到容器中，这样可以方便地管理配置。
 
 | 本地路径 | 容器路径 | 说明 |
 |---------|---------|------|
-| `/path/to/auth_profiles` | `/app/auth_profiles` | 认证文件（必需） |
-| `/path/to/.env` | `/app/.env:ro` | 配置文件（推荐） |
-| `/path/to/certs` | `/app/certs` | 证书文件（可选） |
+| `/path/to/auth_profiles` | `/app/auth_profiles` | **必需**。存放认证文件 |
+| `/path/to/.env` | `/app/.env:ro` | **推荐**。配置文件 |
+| `/path/to/certs` | `/app/certs` | **可选**。自签名证书 |
 
-### 管理容器
+## ⚙️ 权限配置
 
-```bash
-# 查看运行状态
-docker ps | grep ai-studio-proxy
+为了让工作流正常运行，请确保仓库权限设置正确：
 
-# 查看日志
-docker logs -f ai-studio-proxy-container
-
-# 重启容器
-docker restart ai-studio-proxy-container
-
-# 停止容器
-docker stop ai-studio-proxy-container
-
-# 删除容器
-docker rm -f ai-studio-proxy-container
-```
+1. 进入仓库 **Settings** > **Actions** > **General**。
+2. 在 **Workflow permissions** 下，选择 **Read and write permissions**。
+3. 勾选 **Allow GitHub Actions to create and approve pull requests**。
 
 ## 📁 文件结构
 
 ```
 .github/
 ├── workflows/
-│   ├── sync-upstream.yml      # 自动同步上游仓库
-│   └── docker-release.yml     # Docker 镜像发布
-└── README.md                   # 本文档
-```
-
-## ⚙️ 配置说明
-
-### 所需权限
-
-确保您的 GitHub 仓库已启用以下设置：
-
-1. **Workflow 权限**：
-   - 进入仓库 Settings > Actions > General
-   - 选择 "Read and write permissions"
-   - 勾选 "Allow GitHub Actions to create and approve pull requests"（如果需要自动创建 PR）
-
-2. **容器注册表访问**：
-   - GitHub Container Registry (GHCR) 默认可用
-   - 无需额外配置，使用 `GITHUB_TOKEN` 进行身份验证
-
-### 可选配置
-
-您可以在仓库 Secrets 中配置以下变量：
-
-- `DOCKER_PROXY_ADDR`: Docker 构建时的代理地址（可选）
-
-## 📊 监控和调试
-
-### 查看工作流状态
-
-1. 进入 GitHub 仓库
-2. 点击 "Actions" 标签页
-3. 查看工作流执行历史和日志
-
-### 常见问题
-
-**问题1**: 同步工作流失败
-```
-解决方案: 检查是否有 push 权限，确保分支保护规则允许 workflow 推送
-```
-
-**问题2**: Docker 构建失败
-```
-解决方案: 检查 Dockerfile 和依赖配置是否正确
-```
-
-**问题3**: 权限错误
-```
-解决方案: 检查仓库 Settings > Actions > General 中的工作流权限设置
-```
-
-## 🔧 自定义配置
-
-### 修改同步频率
-
-编辑 `.github/workflows/sync-upstream.yml` 中的 cron 表达式：
-
-```yaml
-on:
-  schedule:
-    # 每6小时运行一次
-    - cron: '0 */6 * * *'
-```
-
-### 修改 Docker 镜像标签策略
-
-编辑 `.github/workflows/docker-release.yml` 中的 metadata 配置：
-
-```yaml
-tags: |
-  type=ref,event=tag,pattern={{tag}}
-  type=raw,value=latest
-  # 添加其他标签格式
+│   ├── sync-upstream.yml      # 负责代码同步
+│   └── docker-release.yml     # 负责镜像构建与发布
+└── README.md                   # 本说明文档
 ```
 
 ## 📝 更新日志
 
-- **2025-11-26**: 初始版本，创建自动同步和 Docker 发布工作流
-
-## 🤝 贡献
-
-如有问题或建议，请提交 Issue 或 Pull Request。
-
-## 📄 许可证
-
-本项目遵循与主项目相同的 AGPLv3 许可证。
+- **2025-11-26**: 优化文档，明确区分稳定版发布与日常自动构建流程。
+- **2025-11-26**: 初始版本，创建自动同步和 Docker 发布工作流。

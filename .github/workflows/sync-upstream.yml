@@ -115,3 +115,21 @@ jobs:
           else
             echo "- **Result**: ✅ Repository is already up-to-date" >> $GITHUB_STEP_SUMMARY
           fi
+
+      - name: Trigger Docker Build
+        if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Trigger docker-release workflow
+            github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'docker-release.yml',
+              ref: 'main',
+              inputs: {
+                tag_name: 'auto-' + new Date().toISOString().slice(0, 10) + '-' + Math.floor(Math.random() * 1000),
+                create_release: false
+              }
+            })
+            console.log('✅ Docker build triggered successfully!')
