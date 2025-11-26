@@ -55,6 +55,15 @@
 - 自动：上游tag → 自动构建镜像 + 创建Release
 - 手动：仅构建镜像（不创建Release）
 
+## ✨ 关键特性
+
+| 特性 | 说明 |
+|------|------|
+| 🏷️ **双标签支持** | 每个版本都有 `v1.2.0` 和 `latest` 两个标签 |
+| 🔄 **自动更新latest** | 最新版本自动更新latest标签 |
+| 📦 **即用镜像** | 无需本地构建，直接拉取运行 |
+| 🔧 **完整配置** | 发布页自动包含运行命令和说明 |
+
 ## 🚀 使用指南
 
 ### 方式一：自动同步上游代码
@@ -110,6 +119,64 @@
 5. 完成！您的fork现在有了对应的Docker镜像
 
 **用户无需任何手动操作！** 🎉
+
+## 🐳 Docker 镜像使用
+
+### 拉取镜像
+
+```bash
+# 拉取最新版本（推荐）
+docker pull ghcr.io/<your-username>/aistudioproxyapi:latest
+
+# 拉取特定版本
+docker pull ghcr.io/<your-username>/aistudioproxyapi:v1.2.0
+```
+
+### 运行容器
+
+```bash
+docker run -d \
+    --restart always \
+    -p 8880:2048 \
+    -p 8881:3120 \
+    -v "/Users/sanbo/log/AIstudioProxy/auth_profiles":/app/auth_profiles \
+    -v "/Users/sanbo/log/AIstudioProxy/.env":/app/.env:ro \
+    -v "/Users/sanbo/log/AIstudioProxy/certs":/app/certs \
+    --name ai-studio-proxy-container \
+    ghcr.io/<your-username>/aistudioproxyapi:latest
+```
+
+### 端口说明
+
+- **8880:2048** - FastAPI服务端口（API端点）
+- **8881:3120** - 流式代理端口（流式响应）
+
+### 数据卷挂载
+
+| 本地路径 | 容器路径 | 说明 |
+|---------|---------|------|
+| `/path/to/auth_profiles` | `/app/auth_profiles` | 认证文件（必需） |
+| `/path/to/.env` | `/app/.env:ro` | 配置文件（推荐） |
+| `/path/to/certs` | `/app/certs` | 证书文件（可选） |
+
+### 管理容器
+
+```bash
+# 查看运行状态
+docker ps | grep ai-studio-proxy
+
+# 查看日志
+docker logs -f ai-studio-proxy-container
+
+# 重启容器
+docker restart ai-studio-proxy-container
+
+# 停止容器
+docker stop ai-studio-proxy-container
+
+# 删除容器
+docker rm -f ai-studio-proxy-container
+```
 
 ## 📁 文件结构
 
