@@ -86,7 +86,8 @@ jobs:
     name: Create GitHub Release
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.create_release == 'true' }}
+    # 当通过release事件触发时，跳过创建release（因为已存在）
+    if: ${{ github.event_name != 'workflow_dispatch' && github.event_name != 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') }}
     permissions:
       contents: write  # 需要写入权限来创建release
       packages: read   # 需要读取权限来获取镜像信息
