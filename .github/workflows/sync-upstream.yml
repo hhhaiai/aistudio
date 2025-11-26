@@ -30,9 +30,8 @@ jobs:
         run: |
           if ! git remote get-url upstream &> /dev/null; then
             echo "Adding upstream remote..."
-            # 自动检测上游仓库URL
-            UPSTREAM_URL=$(git remote get-url origin | sed 's|https://github.com/[^/]*|https://github.com/CJackHwang|' | sed 's|\.git$||')
-            git remote add upstream "${UPSTREAM_URL}.git"
+            # 直接添加上游仓库URL
+            git remote add upstream https://github.com/CJackHwang/AIstudioProxyAPI.git
           else
             echo "Upstream remote already exists"
           fi
