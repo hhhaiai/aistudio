@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # 需要写入权限来推送更改
+      actions: write   # 需要权限来触发其他workflow
 
     steps:
       - name: Checkout repository
@@ -97,6 +98,19 @@ jobs:
           echo "⬆️ Pushing changes and tags to origin..."
           git push origin main --follow-tags --force
           echo "✅ Successfully pushed to origin"
+
+      - name: Trigger Docker Release for new tags
+        if: steps.sync-upstream-tags.outputs.new-tags != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🚀 Triggering Docker Release for new tags..."
+          for tag in $(echo "${{ steps.sync-upstream-tags.outputs.new-tags }}" | tr '\n' ' '); do
+            if [ -n "$tag" ]; then
+              echo "Triggering for tag: $tag"
+              gh workflow run docker-release.yml -f tag_name="$tag" -f create_release=true
+            fi
+          done
 
       - name: Create sync summary
         if: always()
