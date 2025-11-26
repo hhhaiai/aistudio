@@ -8,19 +8,19 @@
 
 ### 1. 🔄 自动同步上游仓库 (`sync-upstream.yml`)
 
-**功能**: 每3小时自动同步 fork 的仓库与上游仓库（CJackHwang/AIstudioProxyAPI）
+**功能**: 每天自动同步 fork 的仓库与上游仓库（CJackHwang/AIstudioProxyAPI）
 
 **特性**:
-- ✅ 每3小时自动运行（UTC时间 0,3,6,9,12,15,18,21点）
+- ✅ 每天UTC 20点自动运行（约北京时间次日凌晨4点）
 - ✅ 支持手动触发
 - ✅ 智能检测是否需要同步
 - ✅ 自动合并上游更新
 - ✅ **自动同步上游tags到fork**
-- ✅ 触发Docker Release工作流
+- ✅ 自动触发Docker Release工作流
 - ✅ 生成详细的执行报告
 
 **触发方式**:
-- 定时触发：每3小时
+- 定时触发：每天UTC 20点
 - 手动触发：在 Actions 页面手动运行
 
 **权限要求**:
@@ -28,7 +28,7 @@
 
 **关键流程**:
 ```
-上游仓库打tag → sync工作流检测 → 同步tag到fork → 触发docker-release → 构建镜像
+上游仓库打tag → 每日sync工作流检测 → 同步tag到fork → 触发docker-release → 构建镜像
 ```
 
 ### 2. 🐳 Docker Release (`docker-release.yml`)
@@ -52,8 +52,9 @@
 - `packages: read` - 读取镜像信息
 
 **使用场景**:
-- 自动：上游tag → 自动构建镜像 + 创建Release
-- 手动：仅构建镜像（不创建Release）
+- **自动场景1**：上游tag推送 → 自动构建镜像 + 创建Release
+- **自动场景2**：GitHub网页创建Release → 自动构建镜像（跳过创建Release步骤）
+- **手动场景**：手动触发构建，可选择是否创建Release
 
 ## ✨ 关键特性
 
@@ -69,11 +70,12 @@
 ### 方式一：自动同步上游代码
 
 1. **自动触发**：
-   - 每3小时自动检测上游仓库更新
+   - 每天UTC 20点自动检测上游仓库更新（约北京时间次日凌晨4点）
    - 当检测到新tag时，自动同步到fork
 
 2. **自动构建Docker**：
-   - 上游仓库打tag → sync工作流同步tag → docker-release工作流自动构建
+   - 上游仓库打tag → 每日sync工作流同步tag → docker-release工作流自动构建
+   - 支持3种触发方式：git push tag、GitHub网页创建Release、手动触发
    - 无需手动干预，全自动化
 
 3. **监控同步**：
