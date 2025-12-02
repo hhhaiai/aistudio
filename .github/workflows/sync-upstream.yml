@@ -1,0 +1,126 @@
+name: Sync with Upstream
+
+# 每天自动同步一次上游仓库
+on:
+  schedule:
+    # UTC时间，每天下午20点执行（约北京时间次日凌晨4点）
+    - cron: '0 20 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  sync:
+    name: Sync with upstream repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写入权限来推送更改
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # 获取完整历史记录
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup upstream remote
+        run: |
+          # 检查upstream是否存在
+          if ! git remote get-url upstream &> /dev/null; then
+            echo "Adding upstream remote..."
+            git remote add upstream https://github.com/CJackHwang/AIstudioProxyAPI.git
+          else
+            echo "Upstream remote exists, checking URL..."
+            CURRENT_URL=$(git remote get-url upstream)
+            echo "Current URL: $CURRENT_URL"
+          fi
+          # 确保upstream URL正确
+          git remote set-url upstream https://github.com/CJackHwang/AIstudioProxyAPI.git
+          echo "✅ Upstream remote configured: $(git remote get-url upstream)"
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream
+          git fetch upstream --tags
+
+      - name: Check for updates
+        id: check
+        run: |
+          # 检查当前分支是否落后于上游
+          LOCAL=$(git rev-parse @)
+          REMOTE=$(git rev-parse upstream/main)
+
+          if [ $LOCAL = $REMOTE ]; then
+            echo "status=up-to-date" >> $GITHUB_OUTPUT
+            echo "✅ Repository is up-to-date with upstream"
+          else
+            echo "status=behind" >> $GITHUB_OUTPUT
+            echo "❌ Repository is behind upstream by $(git rev-list --count upstream/main..HEAD) commits"
+
+            # 显示需要同步的提交
+            echo -e "\n📋 Commits to sync:"
+            git log --oneline --graph --decorate upstream/main..HEAD | head -20
+          fi
+
+      - name: Sync with upstream main branch
+        if: steps.check.outputs.status == 'behind'
+        run: |
+          echo "🔄 Syncing with upstream..."
+          git merge upstream/main --no-edit --ff-only
+
+      - name: Check for new tags
+        id: sync-upstream-tags
+        run: |
+          echo "🏷️ Fetching and syncing tags from upstream..."
+          git fetch upstream --tags --force
+
+          # 检查是否有新tag需要同步
+          # 注意：git tag -r upstream 输出带 'upstream/' 前缀，需要去掉
+          LOCAL_TAGS=$(git tag | sort | uniq)
+          UPSTREAM_TAGS=$(git tag -r upstream | grep -v '\^{}' | sed 's|^upstream/||' | sort | uniq)
+
+          # 找出上游有但本地没有的tags
+          NEW_TAGS=$(comm -13 <(echo "$LOCAL_TAGS") <(echo "$UPSTREAM_TAGS"))
+          if [ -n "$NEW_TAGS" ]; then
+            echo "new-tags=$NEW_TAGS" >> $GITHUB_OUTPUT
+            echo "🔍 Found new tags: $NEW_TAGS"
+          else
+            echo "new-tags=" >> $GITHUB_OUTPUT
+            echo "✅ No new tags found"
+          fi
+
+      - name: Create auto tag
+        if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
+        run: |
+          # 生成自动版本号：v{年份}.{月份}.{日期}-{提交哈希前7位}
+          AUTO_TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+          echo "Creating auto tag: $AUTO_TAG"
+          git tag $AUTO_TAG
+          echo "✅ Auto tag created: $AUTO_TAG"
+
+      - name: Push changes and tags
+        if: steps.check.outputs.status == 'behind' || steps.sync-upstream-tags.outputs.new-tags != ''
+        run: |
+          echo "⬆️ Pushing changes and tags to origin..."
+          git push origin main --follow-tags --force
+          echo "✅ Successfully pushed to origin"
+          echo "🚀 This will automatically trigger the Docker Release workflow!"
+
+      - name: Create sync summary
+        if: always()
+        run: |
+          echo "## 📊 Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sync Time**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ steps.check.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Run**: [View Details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.check.outputs.status }}" = "behind" ]; then
+            echo "- **Result**: ✅ Successfully synced with upstream" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Result**: ✅ Repository is already up-to-date" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,282 @@
+name: Create Docker Release
+
+# 自动构建和发布Docker镜像
+on:
+  push:
+    tags:
+      - 'v*.*.*'      # 匹配 v1.0.0, v2.1.3 等格式的tag
+      - 'v*.*.*-*'    # 匹配 v2025.11.26-aecb53d 等格式的自动生成tag
+  release:
+    types: [published]  # 当GitHub Release被发布时触发
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      tag_name:
+        description: 'Tag name (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+        type: string
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'true'
+        type: boolean
+  schedule:
+    # 每周日凌晨2点（UTC时间）触发，约北京时间上午10点
+    - cron: '0 2 * * 0'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # 需要写入权限来推送Docker镜像到GHCR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate automatic tag name
+        id: auto_tag
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name == 'v1.0.0'
+        run: |
+          # 生成自动版本号：v{年份}.{月份}.{日期}-{提交哈希前7位}
+          AUTO_TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+          echo "tag_name=$AUTO_TAG" >> $GITHUB_OUTPUT
+          echo "Generated automatic tag: $AUTO_TAG"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # 使用tag作为版本号（通过git push触发）
+            type=ref,event=tag,pattern={{tag}}
+            # 手动触发时使用输入的tag名
+            type=raw,value=${{ github.event.inputs.tag_name }},enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name != 'v1.0.0' }}
+            # 自动生成的tag名（定时触发或默认手动触发）
+            type=raw,value=${{ steps.auto_tag.outputs.tag_name }},enable=${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name == 'v1.0.0') }}
+            # 通过GitHub Release触发时使用release的tag名
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            # 始终标记为latest（确保latest指向最新版本）
+            type=raw,value=latest
+            # 添加架构特定的标签
+            type=raw,value={{tag}}-amd64,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest-amd64
+            type=raw,value={{tag}}-arm64,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest-arm64
+            # 添加semver格式支持
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') || startsWith(github.event.inputs.tag_name, 'v') || startsWith(steps.auto_tag.outputs.tag_name, 'v') }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PROXY_ADDR=${{ secrets.DOCKER_PROXY_ADDR }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Image
+        run: |
+          echo "✅ Docker image built successfully"
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name || github.event.inputs.tag_name || github.event.release.tag_name }}"
+          echo "🏷️ Supported Architectures: linux/amd64, linux/arm64"
+          echo "🏷️ All Tags: ${{ steps.meta.outputs.tags }}"
+          echo "📋 Manifest List created with multi-architecture support"
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    # 当通过release事件触发时，跳过创建release（因为已存在）
+    # 定时触发时默认不创建release，手动触发时根据参数决定
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write  # 需要写入权限来创建release
+      packages: read   # 需要读取权限来获取镜像信息
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史以生成changelog
+
+      - name: Set tag name
+        id: set_tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            TAG_NAME="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+          else
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Using tag: $TAG_NAME"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG_NAME="${{ steps.set_tag.outputs.tag_name }}"
+          
+          # 获取上一个tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "## 📝 Changes" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "This is the initial release!" >> CHANGELOG.md
+          else
+            # 生成从上个tag到现在的提交记录
+            echo "## 📝 Changes from $PREVIOUS_TAG to $TAG_NAME" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> CHANGELOG.md
+          fi
+
+          # 添加镜像信息和使用说明
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## 🐳 Docker Image" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "This release includes a pre-built Docker image with **multi-architecture support**:" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### Supported Architectures:" >> CHANGELOG.md
+          echo "- **linux/amd64** - Standard x86_64 systems" >> CHANGELOG.md
+          echo "- **linux/arm64** - ARM 64-bit systems (Apple Silicon, Raspberry Pi, AWS Graviton, etc.)" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME" >> CHANGELOG.md
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### Architecture-specific tags:" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME-amd64" >> CHANGELOG.md
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME-arm64" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### 🚀 Run Container" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo '```bash' >> CHANGELOG.md
+          echo 'docker run -d \' >> CHANGELOG.md
+          echo '    --restart always \' >> CHANGELOG.md
+          echo '    -p 8880:2048 \' >> CHANGELOG.md
+          echo '    -p 8881:3120 \' >> CHANGELOG.md
+          echo '    -v "/path/to/auth_profiles":/app/auth_profiles \' >> CHANGELOG.md
+          echo '    -v "/path/to/.env":/app/.env:ro \' >> CHANGELOG.md
+          echo '    -v "/path/to/certs":/app/certs \' >> CHANGELOG.md
+          echo '    --name ai-studio-proxy-container \' >> CHANGELOG.md
+          echo "    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+
+          # 读取文件内容并设置输出
+          {
+            echo 'changelog<<EOF'
+            cat CHANGELOG.md
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.set_tag.outputs.tag_name }}
+          name: Release ${{ steps.set_tag.outputs.tag_name }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            # 可以在这里添加要上传的附件，如预编译的二进制文件等
+
+      - name: Release summary
+        run: |
+          TAG_NAME="${{ steps.set_tag.outputs.tag_name }}"
+          echo "## 🎉 Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: $TAG_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release**: [View Release](https://github.com/${{ github.repository }}/releases/tag/$TAG_NAME)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Image**: [View in GHCR](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏷️ Image Tags:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME-amd64" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG_NAME-arm64" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-amd64" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🖥️ Supported Architectures:" >> $GITHUB_STEP_SUMMARY
+          echo "- **linux/amd64** - Standard x86_64 systems" >> $GITHUB_STEP_SUMMARY
+          echo "- **linux/arm64** - ARM 64-bit systems (Apple Silicon, Raspberry Pi, AWS Graviton, etc.)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Pull & Run:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Pull latest (auto-selects correct architecture)" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull for specific architecture" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Run container" >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
+          echo "    --restart always \\" >> $GITHUB_STEP_SUMMARY
+          echo "    -p 8880:2048 \\" >> $GITHUB_STEP_SUMMARY
+          echo "    -p 8881:3120 \\" >> $GITHUB_STEP_SUMMARY
+          echo '    -v "/path/to/auth_profiles":/app/auth_profiles \' >> $GITHUB_STEP_SUMMARY
+          echo '    -v "/path/to/.env":/app/.env:ro \' >> $GITHUB_STEP_SUMMARY
+          echo '    -v "/path/to/certs":/app/certs \' >> $GITHUB_STEP_SUMMARY
+          echo '    --name ai-studio-proxy-container \\' >> $GITHUB_STEP_SUMMARY
+          echo "    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Notify Success
+    needs: [build-and-push, create-release]
+    runs-on: ubuntu-latest
+    if: always() && needs.build-and-push.result == 'success'
+    steps:
+      - name: Create success summary
+        run: |
+          echo "## ✅ Docker Release Workflow Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (Multi-Arch) | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "|   - linux/amd64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "|   - linux/arm64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release Creation | ${{ needs.create-release.result != 'skipped' && '✅ Success' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: ${{ github.ref_name || github.event.inputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Architectures**: amd64, arm64" >> $GITHUB_STEP_SUMMARY
