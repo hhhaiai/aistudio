@@ -675,7 +675,7 @@ class QueueManager:
 
         try:
             # 快速刷新页面
-            await page.reload(wait_until="domcontentloaded", timeout=10000)
+            await page.reload(wait_until="domcontentloaded", timeout=20000)
 
             # 等待关键元素可用 (短超时)
             from config.selectors import PROMPT_TEXTAREA_SELECTOR

@@ -25,6 +25,9 @@ INPUT_SELECTOR2 = PROMPT_TEXTAREA_SELECTOR
 # --- 按钮选择器 ---
 # 发送按钮：优先匹配 prompt 区域内 aria-label="Run" 的提交按钮
 SUBMIT_BUTTON_SELECTOR = (
+    # 新版 UI 结构 (基于用户提供的 HTML)
+    'ms-run-button button[type="submit"], '
+    'ms-run-button button[aria-label="Run"], '
     # 当前 UI 结构
     'ms-prompt-input-wrapper ms-run-button button[aria-label="Run"], '
     'ms-prompt-input-wrapper button[aria-label="Run"][type="submit"], '
@@ -75,8 +78,27 @@ COPY_MARKDOWN_BUTTON_SELECTOR_ALT = 'div[role="menu"] button:has-text("Copy Mark
 MAX_OUTPUT_TOKENS_SELECTOR = 'input[aria-label="Maximum output tokens"]'
 STOP_SEQUENCE_INPUT_SELECTOR = 'input[aria-label="Add stop token"]'
 MAT_CHIP_REMOVE_BUTTON_SELECTOR = 'mat-chip button.remove-button[aria-label*="Remove"]'
-TOP_P_INPUT_SELECTOR = 'ms-slider input[type="number"][max="1"]'
-TEMPERATURE_INPUT_SELECTOR = 'ms-slider input[type="number"][max="2"]'
+TOP_P_INPUT_SELECTOR = (
+    # 基于实际HTML结构的选择器 (type="text" inputmode="decimal")
+    'ms-slider input.slider-number-input[aria-valuemax="1"], '
+    'ms-slider input.slider-number-input[aria-valuemax="1"][type="text"], '
+    # 备用选择器
+    'input.slider-number-input[aria-valuemax="1"], '
+    'input[aria-valuemax="1"][aria-label*="top" i][aria-label*="p" i], '
+    'input[aria-valuemax="1"][aria-label*="Top P" i], '
+    # 旧版 UI 选择器（保留作为回退）
+    'ms-slider input[type="number"][max="1"]'
+)
+TEMPERATURE_INPUT_SELECTOR = (
+    # 基于实际HTML结构的选择器 (type="text" inputmode="decimal")
+    'ms-slider input.slider-number-input[aria-valuemax="2"], '
+    'ms-slider input.slider-number-input[aria-valuemax="2"][type="text"], '
+    # 备用选择器
+    'input.slider-number-input[aria-valuemax="2"], '
+    'input[aria-valuemax="2"][aria-label*="temperature" i], '
+    # 旧版 UI 选择器（保留作为回退）
+    'ms-slider input[type="number"][max="2"]'
+)
 USE_URL_CONTEXT_SELECTOR = 'button[aria-label="Browse the url context"]'
 
 # --- 思考模式相关选择器 ---

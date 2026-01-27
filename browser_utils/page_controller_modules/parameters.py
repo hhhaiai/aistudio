@@ -27,6 +27,72 @@ from .base import BaseController
 class ParameterController(BaseController):
     """Handles parameter adjustments (temperature, tokens, etc.)."""
 
+    def _safe_float_conversion(self, value_str: str, param_name: str = "参数"):
+        """安全地将字符串转换为浮点数，处理'None'、空值和各种变体。
+
+        Args:
+            value_str: 要转换的字符串
+            param_name: 参数名称，用于日志记录
+
+        Returns:
+            转换后的浮点数，或None（如果无法转换）
+        """
+        if not value_str:
+            self.logger.debug(f"[Param] {param_name}: 输入值为空，返回None")
+            return None
+
+        cleaned = value_str.strip()
+        if not cleaned:
+            self.logger.debug(f"[Param] {param_name}: 输入值只包含空白字符，返回None")
+            return None
+
+        # 处理各种"None"表示形式
+        cleaned_lower = cleaned.lower()
+        if cleaned_lower == "none" or cleaned_lower == "null" or cleaned_lower == "nan":
+            self.logger.debug(f"[Param] {param_name}: 输入值为'{cleaned}'，返回None")
+            return None
+
+        try:
+            result = float(cleaned)
+            self.logger.debug(f"[Param] {param_name}: 成功转换 '{cleaned}' -> {result}")
+            return result
+        except (ValueError, TypeError) as e:
+            self.logger.warning(f"[Param] {param_name}: 无法转换值 '{cleaned}'，错误: {e}")
+            return None
+
+    def _safe_int_conversion(self, value_str: str, param_name: str = "参数"):
+        """安全地将字符串转换为整数，处理'None'、空值和各种变体。
+
+        Args:
+            value_str: 要转换的字符串
+            param_name: 参数名称，用于日志记录
+
+        Returns:
+            转换后的整数，或None（如果无法转换）
+        """
+        if not value_str:
+            self.logger.debug(f"[Param] {param_name}: 输入值为空，返回None")
+            return None
+
+        cleaned = value_str.strip()
+        if not cleaned:
+            self.logger.debug(f"[Param] {param_name}: 输入值只包含空白字符，返回None")
+            return None
+
+        # 处理各种"None"表示形式
+        cleaned_lower = cleaned.lower()
+        if cleaned_lower == "none" or cleaned_lower == "null" or cleaned_lower == "nan":
+            self.logger.debug(f"[Param] {param_name}: 输入值为'{cleaned}'，返回None")
+            return None
+
+        try:
+            result = int(cleaned)
+            self.logger.debug(f"[Param] {param_name}: 成功转换 '{cleaned}' -> {result}")
+            return result
+        except (ValueError, TypeError) as e:
+            self.logger.warning(f"[Param] {param_name}: 无法转换值 '{cleaned}'，错误: {e}")
+            return None
+
     async def adjust_parameters(
         self,
         request_params: Dict[str, Any],
@@ -139,7 +205,30 @@ class ParameterController(BaseController):
                     check_client_disconnected, "温度调整 - 读取输入框值后"
                 )
 
-                current_temp_float = float(current_temp_str)
+                # 使用安全转换函数处理当前值
+                current_temp_float = self._safe_float_conversion(current_temp_str, "温度")
+
+                # 处理空值或"None"值
+                if current_temp_float is None:
+                    self.logger.debug(f"[Param] Temperature: 输入框值为空或'None'，直接设置为 {clamped_temp}")
+                    await temp_input_locator.fill(str(clamped_temp), timeout=5000)
+                    await self._check_disconnect(
+                        check_client_disconnected, "温度调整 - 填充输入框后"
+                    )
+                    # 跳过值比较，直接验证设置
+                    await asyncio.sleep(0.1)
+                    new_temp_str = await temp_input_locator.input_value(timeout=3000)
+                    new_temp_float = self._safe_float_conversion(new_temp_str, "温度验证")
+                    if new_temp_float is not None:
+                        self.logger.debug(f"[Param] Temperature: 已设置为 -> {new_temp_float}")
+                        page_params_cache["temperature"] = new_temp_float
+                        return
+                    else:
+                        self.logger.warning(f"Temperature 设置后验证失败，值: '{new_temp_str}'")
+                        page_params_cache.pop("temperature", None)
+                        from browser_utils.operations import save_error_snapshot
+                        await save_error_snapshot(f"temperature_verify_fail_{self.req_id}")
+                        return
 
                 # Silent Success: Page value matches - single concise log
                 if abs(current_temp_float - clamped_temp) < 0.001:
@@ -159,16 +248,17 @@ class ParameterController(BaseController):
 
                     await asyncio.sleep(0.1)
                     new_temp_str = await temp_input_locator.input_value(timeout=3000)
-                    new_temp_float = float(new_temp_str)
+                    new_temp_float = self._safe_float_conversion(new_temp_str, "温度验证")
 
-                    if abs(new_temp_float - clamped_temp) < 0.001:
+                    if new_temp_float is not None and abs(new_temp_float - clamped_temp) < 0.001:
                         self.logger.debug(
                             f"[Param] Temperature: 已更新 -> {new_temp_float}"
                         )
                         page_params_cache["temperature"] = new_temp_float
                     else:
+                        actual_value = new_temp_float if new_temp_float is not None else f"无效值: '{new_temp_str}'"
                         self.logger.warning(
-                            f"Temperature update failed. Page shows: {new_temp_float}, expected: {clamped_temp}."
+                            f"Temperature update failed. Page shows: {actual_value}, expected: {clamped_temp}."
                         )
                         page_params_cache.pop("temperature", None)
                         from browser_utils.operations import save_error_snapshot
@@ -265,7 +355,14 @@ class ParameterController(BaseController):
                 current_max_tokens_str = await max_tokens_input_locator.input_value(
                     timeout=3000
                 )
-                current_max_tokens_int = int(current_max_tokens_str)
+                current_max_tokens_int = self._safe_int_conversion(current_max_tokens_str, "最大输出Token")
+
+                if current_max_tokens_int is None:
+                    self.logger.error(f"无法转换最大输出Token值: '{current_max_tokens_str}'")
+                    page_params_cache.pop("max_output_tokens", None)
+                    from browser_utils.operations import save_error_snapshot
+                    await save_error_snapshot(f"max_tokens_value_error_{self.req_id}")
+                    return
 
                 # Silent Success: Page value matches - single concise log
                 if current_max_tokens_int == clamped_max_tokens:
@@ -289,16 +386,17 @@ class ParameterController(BaseController):
                     new_max_tokens_str = await max_tokens_input_locator.input_value(
                         timeout=3000
                     )
-                    new_max_tokens_int = int(new_max_tokens_str)
+                    new_max_tokens_int = self._safe_int_conversion(new_max_tokens_str, "最大输出Token验证")
 
-                    if new_max_tokens_int == clamped_max_tokens:
+                    if new_max_tokens_int is not None and new_max_tokens_int == clamped_max_tokens:
                         self.logger.debug(
                             f"[Param] Max Tokens: 已更新 -> {new_max_tokens_int}"
                         )
                         page_params_cache["max_output_tokens"] = new_max_tokens_int
                     else:
+                        actual_value = new_max_tokens_int if new_max_tokens_int is not None else f"无效值: '{new_max_tokens_str}'"
                         self.logger.warning(
-                            f"Max Tokens update failed. Page shows: {new_max_tokens_int}, expected: {clamped_max_tokens}."
+                            f"Max Tokens update failed. Page shows: {actual_value}, expected: {clamped_max_tokens}."
                         )
                         page_params_cache.pop("max_output_tokens", None)
                         from browser_utils.operations import save_error_snapshot
@@ -510,7 +608,29 @@ class ParameterController(BaseController):
             )
 
             current_top_p_str = await top_p_input_locator.input_value(timeout=3000)
-            current_top_p_float = float(current_top_p_str)
+
+            # 使用安全转换函数处理当前值
+            current_top_p_float = self._safe_float_conversion(current_top_p_str, "Top P")
+
+            # 处理空值或"None"值
+            if current_top_p_float is None:
+                self.logger.debug(f"[Param] Top P: 输入框值为空或'None'，直接设置为 {clamped_top_p}")
+                await top_p_input_locator.fill(str(clamped_top_p), timeout=5000)
+                await self._check_disconnect(
+                    check_client_disconnected, "Top P 调整 - 填充输入框后"
+                )
+                # 跳过值比较，直接验证设置
+                await asyncio.sleep(0.1)
+                new_top_p_str = await top_p_input_locator.input_value(timeout=3000)
+                new_top_p_float = self._safe_float_conversion(new_top_p_str, "Top P验证")
+                if new_top_p_float is not None:
+                    self.logger.debug(f"[Param] Top P: 已设置为 -> {new_top_p_float}")
+                    return
+                else:
+                    self.logger.warning(f"Top P 设置后验证失败，值: '{new_top_p_str}'")
+                    from browser_utils.operations import save_error_snapshot
+                    await save_error_snapshot(f"top_p_verify_fail_{self.req_id}")
+                    return
 
             # Value differs - show update process
             if abs(current_top_p_float - clamped_top_p) > 1e-9:
@@ -525,13 +645,14 @@ class ParameterController(BaseController):
                 # 验证设置是否成功
                 await asyncio.sleep(0.1)
                 new_top_p_str = await top_p_input_locator.input_value(timeout=3000)
-                new_top_p_float = float(new_top_p_str)
+                new_top_p_float = self._safe_float_conversion(new_top_p_str, "Top P验证")
 
-                if abs(new_top_p_float - clamped_top_p) <= 1e-9:
+                if new_top_p_float is not None and abs(new_top_p_float - clamped_top_p) <= 1e-9:
                     self.logger.debug(f"[Param] Top P: 已更新 -> {new_top_p_float}")
                 else:
+                    actual_value = new_top_p_float if new_top_p_float is not None else f"无效值: '{new_top_p_str}'"
                     self.logger.warning(
-                        f"Top P update failed. Page shows: {new_top_p_float}, expected: {clamped_top_p}."
+                        f"Top P update failed. Page shows: {actual_value}, expected: {clamped_top_p}."
                     )
                     from browser_utils.operations import save_error_snapshot
 

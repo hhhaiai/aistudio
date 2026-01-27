@@ -53,9 +53,9 @@ WAIT_FOR_ELEMENT_TIMEOUT_MS = int(
 PSEUDO_STREAM_DELAY = float(os.environ.get("PSEUDO_STREAM_DELAY", "0.01"))
 
 # --- 快速失败配置 (Fast-Fail) ---
-# 发送按钮启用超时 - 降低以实现快速失败检测 (从 100000ms 降至 5000ms)
+# 发送按钮启用超时 - 适当增加以适应网络变化 (从 5000ms 增至 10000ms)
 SUBMIT_BUTTON_ENABLE_TIMEOUT_MS = int(
-    os.environ.get("SUBMIT_BUTTON_ENABLE_TIMEOUT_MS", "5000")
+    os.environ.get("SUBMIT_BUTTON_ENABLE_TIMEOUT_MS", "10000")
 )
 
 # --- 选择器超时配置 ---
